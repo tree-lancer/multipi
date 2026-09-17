@@ -5,6 +5,11 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
+const REPO_ROOT = path.resolve(ROOT, "..", "..");
+const CHECKOUT_DASHBOARD_DIR = path.join(REPO_ROOT, "multipi", "ext", "dashboard");
+const DASHBOARD_CACHE_DIR = path.join(os.homedir(), ".pi", "bus", "dashboard", "source");
+const DASHBOARD_REMOTE = "git@github.com:tree-lancer/multipi-dashboard.git";
+const BUS_URL = (process.env.PI_BUS_URL || "http://127.0.0.1:43871").replace(/\/$/, "");
 const DATA_DIR = process.env.PI_BUS_DATA_DIR || path.join(os.homedir(), ".pi", "bus");
 const DB_PATH = process.env.PI_BUS_DB || path.join(DATA_DIR, "bus.sqlite");
 const PID_PATH = process.env.PI_BUS_PID || path.join(DATA_DIR, "bus.pid");
@@ -19,7 +24,68 @@ else if (cmd === "down") down();
 else if (cmd === "restart") { down({ quiet: true }); up(); }
 else if (cmd === "status") status();
 else if (cmd === "history") history(args);
+else if (cmd === "dashboard") dashboard(args);
 else help();
+
+function dashboard(args) {
+  if (args.length > 0) {
+    console.error(`unknown dashboard option: ${args[0]}`);
+    process.exit(2);
+  }
+
+  let dashboardDir;
+  if (fs.existsSync(path.join(REPO_ROOT, ".git"))) {
+    const submodule = spawnSync("git", ["submodule", "update", "--init", "multipi/ext/dashboard"], {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+    });
+    if (submodule.status !== 0) process.exit(submodule.status || 1);
+    dashboardDir = CHECKOUT_DASHBOARD_DIR;
+  } else {
+    dashboardDir = DASHBOARD_CACHE_DIR;
+    if (!fs.existsSync(path.join(dashboardDir, ".git"))) {
+      console.log("Fetching dashboard source (first use only)...");
+      fs.mkdirSync(path.dirname(dashboardDir), { recursive: true });
+      const clone = spawnSync("git", ["clone", "--depth", "1", DASHBOARD_REMOTE, dashboardDir], { stdio: "inherit" });
+      if (clone.status !== 0) process.exit(clone.status || 1);
+    }
+  }
+
+  if (!fs.existsSync(path.join(dashboardDir, "package-lock.json"))) {
+    console.error(`dashboard source is unavailable: ${dashboardDir}`);
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(path.join(dashboardDir, "node_modules"))) {
+    console.log("Installing dashboard dependencies (first use only)...");
+    const install = spawnSync("npm", ["ci", "--workspace", "apps/web", "--include-workspace-root", "--no-audit", "--no-fund"], { cwd: dashboardDir, stdio: "inherit" });
+    if (install.status !== 0) process.exit(install.status || 1);
+  }
+
+  if (!fs.existsSync(path.join(dashboardDir, "apps", "web", "dist", "cli", "cli.js"))) {
+    console.log("Building dashboard (first use or source update)...");
+    const build = spawnSync("npm", ["run", "build"], { cwd: dashboardDir, stdio: "inherit" });
+    if (build.status !== 0) process.exit(build.status || 1);
+  }
+
+  up();
+  ensureDashboardBusFeatures();
+  const dashboardPort = Number(process.env.MULTIPI_DASHBOARD_PORT || 43872);
+  console.log(`Starting multipi dashboard at http://127.0.0.1:${dashboardPort}`);
+  const child = spawn("npm", ["run", "dashboard"], { cwd: dashboardDir, stdio: "inherit", env: process.env });
+  child.on("exit", (code) => process.exit(code || 0));
+}
+
+function ensureDashboardBusFeatures() {
+  if (waitForDashboardBusEndpoint()) return;
+  console.error("The running bus does not include dashboard event streaming. Run 'bus restart' to load the current extension, then run 'bus dashboard' again.");
+  process.exit(1);
+}
+
+function waitForDashboardBusEndpoint() {
+  const result = spawnSync("curl", ["-fsS", `${BUS_URL}/messages/since?afterId=0`], { stdio: "ignore" });
+  return result.status === 0;
+}
 
 function up() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -137,8 +203,9 @@ function page(text) {
 }
 
 function help() {
-  console.log("Usage: bus <up|down|restart|status|history>");
+  console.log("Usage: bus <up|down|restart|status|history|dashboard>");
   console.log("       bus history [--oneline]");
+  console.log("       bus dashboard");
 }
 
 function readPid() {

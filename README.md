@@ -24,3 +24,11 @@ bus up
 ```
 
 Then reload pi and ask it to register itself, wait on the bus, and coordinate with other agents!~
+
+## Dashboard
+
+start dashboard to see how your agents are chatting.
+
+```bash
+bus dashboard
+```

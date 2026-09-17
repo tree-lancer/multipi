@@ -7,11 +7,12 @@ export const MessageSubject = Type.Union([
 ]);
 
 export const BusMessagePayloadSchema = Type.Object({
-	subject: MessageSubject,
-	content: Type.String({ description: "Message body." }),
-	attachment: Type.Array(Type.String(), {
-		description: "File paths for data that should not be embedded in the message body. Use an empty array when there are no attachments.",
-	}),
+	 subject: MessageSubject,
+	 content: Type.String({ description: "Message body." }),
+	 attachment: Type.Array(Type.String(), {
+		 description: "File paths for data that should not be embedded in the message body. Use an empty array when there are no attachments.",
+	 }),
+	 reply_to: Type.Optional(Type.Integer({ minimum: 1, description: "ID of the bus message being quoted or replied to." })),
 });
 
 export type BusMessageSubject = Static<typeof MessageSubject>;
@@ -24,6 +25,7 @@ export type BusDeliveredMessage = {
 	subject: BusMessageSubject;
 	content: string;
 	attachment: string[];
+	replyTo?: number;
 	createdAt: string;
 };
 
@@ -38,5 +40,8 @@ export function validatePayload(message: BusMessagePayload): void {
 		if (typeof file !== "string" || file.trim() === "") {
 			throw new Error("message.attachment must contain non-empty file paths");
 		}
+	}
+	if (message.reply_to !== undefined && (!Number.isInteger(message.reply_to) || message.reply_to < 1)) {
+		throw new Error("message.reply_to must be a positive message ID");
 	}
 }

@@ -1,0 +1,3 @@
+[submodule "multipi/ext/dashboard"]
+	path = multipi/ext/dashboard
+	url = git@github.com:tree-lancer/multipi-dashboard.git

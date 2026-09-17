@@ -23,6 +23,7 @@ migrate(db);
 const queue = createQueue(db);
 const taskStore = createTaskStore(db);
 const subscribers = new Map();
+const globalSubscribers = new Set();
 
 const upsertAgent = db.prepare(`
   INSERT INTO agents (name, description, last_seen_at)
@@ -62,6 +63,7 @@ const server = http.createServer(async (req, res) => {
       const row = { name: body.name.trim(), description: String(body.description || ""), last_seen_at: new Date().toISOString() };
       upsertAgent.run(row);
       if (body.sessionId) bindSession(row.name, body.sessionId);
+      broadcastGlobal({ type: "agent_registered", agent: agentView(row) });
       return json(res, 200, agentView(row));
     }
 
@@ -87,6 +89,12 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, rows.map(agentView));
     }
 
+    if (req.method === "GET" && url.pathname === "/messages/since") {
+      const afterId = Number(url.searchParams.get("afterId") || 0);
+      const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") || 200)));
+      return json(res, 200, { messages: queue.since(afterId, limit) });
+    }
+
     if (req.method === "GET" && url.pathname === "/messages/events") {
       const agent = (url.searchParams.get("agent") || "").trim();
       assertName(agent, "agent");
@@ -107,6 +115,7 @@ const server = http.createServer(async (req, res) => {
         if (!getAgent.get(dest)) throw new Error(`destination is not registered: ${dest}`);
       }
       const result = queue.send(from, dests, body.message);
+      for (const message of result.messages || []) broadcastGlobal({ type: "message", message });
       for (const dest of dests) notifyPending(dest);
       return json(res, 200, result);
     }
@@ -130,6 +139,10 @@ const server = http.createServer(async (req, res) => {
       if (count > 0) return json(res, 200, { available: true, count });
       const timeoutMs = Math.max(1000, Math.floor(body.timeoutMs || 30000));
       return waitOnce(agent, timeoutMs, req, res);
+    }
+
+    if (req.method === "GET" && url.pathname === "/events/all") {
+      return subscribeGlobal(req, res);
     }
 
     if (req.method === "POST" && url.pathname === "/tasks/publish") {
@@ -237,13 +250,55 @@ function shutdown() {
       try { if (typeof res.end === "function") res.end(); } catch {}
     }
   }
+  for (const res of globalSubscribers) {
+    try { if (typeof res.end === "function") res.end(); } catch {}
+  }
   try { db.close(); } catch {}
   process.exit(0);
 }
 
+function subscribeGlobal(req, res) {
+  globalSubscribers.add(res);
+
+  const cleanup = () => {
+    clearInterval(keepAlive);
+    globalSubscribers.delete(res);
+  };
+
+  const keepAlive = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch { cleanup(); }
+  }, 30000);
+
+  req.on("close", cleanup);
+  req.on("error", cleanup);
+  res.on?.("close", cleanup);
+  res.on?.("error", cleanup);
+
+  try {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write(`data: ${JSON.stringify({ type: "hello" })}\n\n`);
+  } catch {
+    cleanup();
+  }
+}
+
+function broadcastGlobal(event) {
+  for (const res of [...globalSubscribers]) {
+    try {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    } catch {
+      globalSubscribers.delete(res);
+    }
+  }
+}
+
 function subscribe(agent, req, res) {
   touch(agent);
-
   let set = subscribers.get(agent);
   if (!set) {
     set = new Set();
@@ -372,6 +427,7 @@ function migrate(db) {
       subject TEXT NOT NULL CHECK(subject IN ('task', 'question', 'reply')),
       content TEXT NOT NULL,
       attachment_json TEXT NOT NULL DEFAULT '[]',
+      reply_to_id INTEGER,
       created_at TEXT NOT NULL,
       delivered_at TEXT
     );
@@ -398,6 +454,11 @@ function migrate(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_task_assignments_agent ON task_assignments(agent_name, status);
   `);
+
+  const messageColumns = db.prepare("PRAGMA table_info(messages)").all();
+  if (!messageColumns.some((column) => column.name === "reply_to_id")) {
+    db.exec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER");
+  }
 }
 
 function agentView(row) {
@@ -437,6 +498,9 @@ function assertMessage(message) {
   if (!["task", "question", "reply"].includes(message.subject)) throw new Error("message.subject must be task, question, or reply");
   if (typeof message.content !== "string") throw new Error("message.content must be a string");
   if (!Array.isArray(message.attachment)) throw new Error("message.attachment must be a file path list");
+  if (message.reply_to !== undefined && (!Number.isInteger(message.reply_to) || message.reply_to < 1)) {
+    throw new Error("message.reply_to must be a positive message ID");
+  }
 }
 
 function readJson(req) {
