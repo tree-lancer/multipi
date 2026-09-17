@@ -1,0 +1,12 @@
+{
+  "name": "pi-bus-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Centralized sqlite-backed service for pi multi-agent bus.",
+  "bin": {
+    "bus": "./bin/bus"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1"
+  }
+}

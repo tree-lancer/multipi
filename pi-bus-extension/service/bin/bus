@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawn, spawnSync } = require("node:child_process");
+
+const ROOT = path.resolve(__dirname, "..");
+const DATA_DIR = process.env.PI_BUS_DATA_DIR || path.join(os.homedir(), ".pi", "bus");
+const PID_PATH = process.env.PI_BUS_PID || path.join(DATA_DIR, "bus.pid");
+const LOG_PATH = process.env.PI_BUS_LOG || path.join(DATA_DIR, "bus.log");
+const SERVER = path.join(ROOT, "server.js");
+
+const cmd = process.argv[2] || "help";
+
+if (cmd === "up") up();
+else if (cmd === "down") down();
+else if (cmd === "restart") { down({ quiet: true }); up(); }
+else if (cmd === "status") status();
+else help();
+
+function up() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const existing = readPid();
+  if (existing && isAlive(existing)) {
+    console.log(`bus is already running (pid ${existing})`);
+    return;
+  }
+  ensureDependencies();
+  const out = fs.openSync(LOG_PATH, "a");
+  const child = spawn(process.execPath, [SERVER], {
+    cwd: ROOT,
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: process.env,
+  });
+  child.unref();
+  fs.writeFileSync(PID_PATH, String(child.pid));
+  console.log(`bus started (pid ${child.pid})`);
+  console.log(`log: ${LOG_PATH}`);
+}
+
+function down(options = {}) {
+  const pid = readPid();
+  if (!pid) {
+    if (!options.quiet) console.log("bus is not running");
+    return;
+  }
+  if (isAlive(pid)) {
+    process.kill(pid, "SIGTERM");
+    if (!options.quiet) console.log(`bus stopped (pid ${pid})`);
+  }
+  fs.rmSync(PID_PATH, { force: true });
+}
+
+function status() {
+  const pid = readPid();
+  if (pid && isAlive(pid)) console.log(`bus is running (pid ${pid})`);
+  else console.log("bus is not running");
+}
+
+function help() {
+  console.log("Usage: bus <up|down|restart|status>");
+}
+
+function readPid() {
+  try { return Number(fs.readFileSync(PID_PATH, "utf8")); } catch { return undefined; }
+}
+
+function isAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function ensureDependencies() {
+  try {
+    require.resolve("better-sqlite3", { paths: [ROOT] });
+    return;
+  } catch {}
+  console.log("Installing bus service dependencies...");
+  const result = spawnSync("npm", ["install", "--omit=dev"], { cwd: ROOT, stdio: "inherit" });
+  if (result.status !== 0) process.exit(result.status || 1);
+}
