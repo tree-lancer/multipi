@@ -1,4 +1,4 @@
-# pi-connector
+# multipi
 
 A pi extension that turns multiple pi sessions into cooperating agents.
 
