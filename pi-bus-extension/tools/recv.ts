@@ -22,7 +22,6 @@ export function createRecvFromBusTool(client: BusClient, state: AgentState, stat
 		promptSnippet: "Receive pending messages addressed to this agent.",
 		promptGuidelines: [
 			"Use recv_from_bus when you need to read messages sent by other agents.",
-			"After receiving a question or task, answer or act according to the message subject and content.",
 		],
 		parameters: RecvFromBusParams,
 		async execute(_toolCallId: string, params: RecvFromBusInput, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: { ui?: BusStatusUI }) {

@@ -68,7 +68,7 @@ register_self("{agent_name}", "{description}")
 Then start the background listener with:
 wait_bus()
 
-When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
+When you see a `[bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
 
 Mission:
 {mission}
@@ -122,7 +122,7 @@ register_self("design-agent", "Design agent responsible for decomposing requirem
 Then start the background listener with:
 wait_bus()
 
-When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
+When you see a `[bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
 
 Mission:
 Break the user's task into implementable design steps, keep the implementation aligned with intent, and adjust the next step based on checker feedback.
@@ -155,7 +155,7 @@ register_self("implementation-agent", "Implementation agent responsible for impl
 Then start the background listener with:
 wait_bus()
 
-When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
+When you see a `[bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
 
 Mission:
 Implement the current design task faithfully, keep changes scoped, and report completed work for checking.
@@ -188,7 +188,7 @@ register_self("check-agent", "Checking agent responsible for verifying implement
 Then start the background listener with:
 wait_bus()
 
-When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
+When you see a `[bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
 
 Mission:
 Check whether implementation-agent's changes satisfy design-agent's intent and report actionable feedback.

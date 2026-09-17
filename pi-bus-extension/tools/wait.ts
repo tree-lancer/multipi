@@ -90,13 +90,7 @@ function handleBusEvent(
 ): void {
 	if (!isActive() || state.get()?.name !== identity.name || event.type !== "pending" || event.count <= 0) return;
 
-	const prompt = [
-		`[multi-agent bus] ${event.count} message(s) are pending for agent '${identity.name}'.`,
-		"Call recv_from_bus now, then handle each message according to its subject:",
-		"- task: perform the requested work or report blockers",
-		"- question: answer it",
-		"- reply: incorporate the response into the coordination flow",
-	].join("\n");
+	const prompt = `[bus] ${event.count} message(s) pending for '${identity.name}'`;
 
 	try {
 		pi.sendUserMessage(prompt, { deliverAs: "followUp" });
