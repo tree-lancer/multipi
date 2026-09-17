@@ -1,9 +1,0 @@
-{
-  "name": "pi-bus-extension",
-  "version": "0.2.0",
-  "private": true,
-  "description": "Pi multi-agent bus extension with sqlite-backed central service.",
-  "pi": {
-    "extensions": ["./index.ts"]
-  }
-}

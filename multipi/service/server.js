@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 const { createQueue } = require("./queue");
+const { createTaskStore } = require("./tasks");
 
 const HOST = process.env.PI_BUS_HOST || "127.0.0.1";
 const PORT = Number(process.env.PI_BUS_PORT || 43871);
@@ -20,6 +21,7 @@ db.pragma("busy_timeout = 5000");
 
 migrate(db);
 const queue = createQueue(db);
+const taskStore = createTaskStore(db);
 const subscribers = new Map();
 
 const upsertAgent = db.prepare(`
@@ -130,6 +132,75 @@ const server = http.createServer(async (req, res) => {
       return waitOnce(agent, timeoutMs, req, res);
     }
 
+    if (req.method === "POST" && url.pathname === "/tasks/publish") {
+      const body = await readJson(req);
+      assertName(body.publisher, "publisher");
+      const publisher = body.publisher.trim();
+      if (!getAgent.get(publisher)) throw new Error(`publisher is not registered: ${publisher}`);
+      if (typeof body.background !== "string" || !body.background.trim()) throw new Error("background must be a non-empty string");
+      if (!body.assignments || typeof body.assignments !== "object" || Array.isArray(body.assignments)) {
+        throw new Error("assignments must be an object mapping agent name to assignment spec");
+      }
+      const assignments = {};
+      for (const [name, spec] of Object.entries(body.assignments)) {
+        assertName(name, "assignment agent name");
+        if (typeof spec !== "string" || !spec.trim()) throw new Error(`assignment spec for '${name}' must be a non-empty string`);
+        assignments[name.trim()] = spec;
+      }
+      const timeoutMinutes = Number(body.timeoutMinutes || 0);
+      if (!Number.isFinite(timeoutMinutes) || timeoutMinutes < 0) throw new Error("timeoutMinutes must be a non-negative number");
+      const result = taskStore.publish(publisher, body.background.trim(), assignments, Math.floor(timeoutMinutes));
+      const dests = Object.keys(assignments).filter((name) => name !== publisher);
+      if (dests.length > 0) {
+        taskDeliverSystem(`[system] New task #${result.taskId} published for you. Call get_task to view your assignment.`, dests);
+      }
+      return json(res, 200, result);
+    }
+
+    if (req.method === "GET" && url.pathname === "/tasks/current") {
+      const agent = (url.searchParams.get("agent") || "").trim();
+      assertName(agent, "agent");
+      const row = taskStore.currentForAgent.get(agent);
+      if (!row) return json(res, 200, { task: null });
+      return json(res, 200, {
+        task: {
+          id: row.id,
+          publisher: row.publisher,
+          background: row.background,
+          status: row.status,
+          createdAt: row.created_at,
+          timeoutAt: row.timeout_at,
+        },
+        assignment: { spec: row.spec, status: row.assignment_status },
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/tasks/complete") {
+      const body = await readJson(req);
+      assertName(body.agent, "agent");
+      if (body.result !== undefined && typeof body.result !== "string") throw new Error("result must be a string");
+      const result = taskStore.complete(body.agent.trim(), body.result);
+      if (result.completed && result.taskCompleted) {
+        taskDeliverSystem(`[system] Task #${result.taskId} is complete. All assignments are done.`, [result.publisher]);
+      }
+      return json(res, 200, result);
+    }
+
+    if (req.method === "POST" && url.pathname === "/tasks/kill") {
+      const body = await readJson(req);
+      const taskId = Number(body.taskId);
+      if (!Number.isInteger(taskId) || taskId <= 0) throw new Error("taskId must be a positive integer");
+      const result = taskStore.kill(taskId);
+      if (result.killed) {
+        taskDeliverSystem(`[system] Task #${taskId} was force-marked as over. You are released from it.`, result.assignees);
+      }
+      return json(res, 200, result);
+    }
+
+    if (req.method === "GET" && url.pathname === "/tasks/overview") {
+      return json(res, 200, taskStore.overview());
+    }
+
     return json(res, 404, { error: "not found" });
   } catch (error) {
     return json(res, 400, { error: error.message || String(error) });
@@ -141,6 +212,21 @@ server.listen(PORT, HOST, () => {
   console.log(`pi bus service listening on http://${HOST}:${PORT}`);
   console.log(`sqlite: ${DB_PATH}`);
 });
+
+// Periodic timeout sweep: expire overdue active tasks and release their agents.
+const TASK_SWEEP_MS = 60000;
+setInterval(() => {
+  try {
+    for (const swept of taskStore.timeoutSweep()) {
+      taskDeliverSystem(
+        `[system] Task #${swept.taskId} timed out and was marked failed. You are released from it.`,
+        swept.assignees,
+      );
+    }
+  } catch (error) {
+    console.error(`task sweep failed: ${error.message || error}`);
+  }
+}, TASK_SWEEP_MS).unref();
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
@@ -198,8 +284,12 @@ function subscribe(agent, req, res) {
   if (count > 0) sendEvent(agent, res, { type: "pending", agent, count });
 }
 
-function notifyPending(agent) {
-  const count = queue.count(agent);
+function taskDeliverSystem(content, dests) {
+  queue.send("system", dests, { subject: "task", content, attachment: [] });
+  for (const dest of dests) notifyPending(dest);
+}
+
+function notifyPending(agent) {  const count = queue.count(agent);
   const set = subscribers.get(agent);
   if (!set) return;
   for (const res of [...set]) sendEvent(agent, res, { type: "pending", agent, count });
@@ -286,6 +376,27 @@ function migrate(db) {
       delivered_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_messages_dest_pending ON messages(dest, delivered_at, id);
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      publisher TEXT NOT NULL,
+      background TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('active', 'done', 'killed', 'failed')),
+      created_at TEXT NOT NULL,
+      archived_at TEXT,
+      timeout_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS task_assignments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      agent_name TEXT NOT NULL,
+      spec TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending', 'done')),
+      result TEXT,
+      done_at TEXT,
+      FOREIGN KEY(task_id) REFERENCES tasks(id),
+      FOREIGN KEY(agent_name) REFERENCES agents(name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_assignments_agent ON task_assignments(agent_name, status);
   `);
 }
 

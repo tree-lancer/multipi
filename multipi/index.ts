@@ -8,6 +8,9 @@ import { createRecvFromBusTool } from "./tools/recv";
 import { createSendToBusTool } from "./tools/send";
 import { BusStats } from "./core/stats";
 import { createWaitBusTool } from "./tools/wait";
+import { TaskClient } from "./ext/task-dispatch/client";
+import { registerMultipiTasksCommand } from "./ext/task-dispatch/command";
+import { createTaskTools } from "./ext/task-dispatch/tools";
 
 const baseDir = dirname(fileURLToPath(import.meta.url));
 
@@ -21,6 +24,12 @@ const baseDir = dirname(fileURLToPath(import.meta.url));
  * - send_to_bus(dest_agent_names, message)
  * - wait_bus()
  * - recv_from_bus()
+ * - publish_task(background, assignments, timeout_minutes?)
+ * - get_task()
+ * - complete_task(result?)
+ * - kill_task(task_id)
+ *
+ * Command: /multipi-tasks — active task overview panel
  */
 
 export default function piBusExtension(pi: ExtensionAPI) {
@@ -28,6 +37,8 @@ export default function piBusExtension(pi: ExtensionAPI) {
 	const state = new AgentState();
 	const stats = new BusStats();
 	const waitBus = createWaitBusTool(pi, client, state, stats);
+	const taskClient = new TaskClient(client);
+	const taskTools = createTaskTools(taskClient, state);
 
 	pi.on("resources_discover", () => ({
 		skillPaths: [join(baseDir, "skills")],
@@ -63,4 +74,9 @@ export default function piBusExtension(pi: ExtensionAPI) {
 	pi.registerTool(createSendToBusTool(client, state, stats));
 	pi.registerTool(waitBus.tool);
 	pi.registerTool(createRecvFromBusTool(client, state, stats));
+	pi.registerTool(taskTools.publishTask);
+	pi.registerTool(taskTools.getTask);
+	pi.registerTool(taskTools.completeTask);
+	pi.registerTool(taskTools.killTask);
+	registerMultipiTasksCommand(pi, taskClient);
 }

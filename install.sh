@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODE="release"
-EXT_NAME="pi-bus-extension"
+EXT_NAME="multipi"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/$EXT_NAME"
 DEST_ROOT="${PI_EXTENSIONS_DIR:-$HOME/.pi/agent/extensions}"

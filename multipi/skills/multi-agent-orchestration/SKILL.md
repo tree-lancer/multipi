@@ -18,6 +18,10 @@ Agents communicate with these tools:
 - `get_all_agents(with_description=true, with_online_status=true)`
 - `send_to_bus(dest_agent_names, message)`
 - `recv_from_bus(limit=10)`
+- `publish_task(background, assignments, timeout_minutes?)`
+- `get_task()`
+- `complete_task(result?)`
+- `kill_task(task_id)`
 
 Every bus message must use this shape:
 
@@ -31,6 +35,22 @@ Every bus message must use this shape:
 
 `attachment` is always a list of file paths. Use an empty list when there are no attachments.
 
+## Task Dispatch Protocol
+
+For playbook-driven collaboration, prefer publishing a dispatch task instead of manually sending task messages:
+
+- `publish_task(background, assignments, timeout_minutes?)` — publishes one public background description plus a `{ agent_name: assignment_spec }` map. The publisher may include itself in `assignments`. The bus atomically rejects the publish if any assignee is unregistered or already enrolled in another active task.
+- `get_task()` — each assignee reads the public background plus only its own assignment spec.
+- `complete_task(result?)` — marks the caller's assignment done; when every assignment is done the bus archives the task automatically.
+- `kill_task(task_id)` — force-marks an active task as over and releases all of its agents.
+
+Dispatch rules:
+
+- An agent may be enrolled in at most one active task at a time.
+- Assignees are woken by a `[system] New task` prompt; they should call `get_task`, do the work, then call `complete_task`.
+- Timed-out tasks (when `timeout_minutes` was set) are marked failed and all agents are released automatically.
+- Users can view active tasks with the `/multipi-tasks` command panel.
+
 ## Orchestration Procedure
 
 When given a playbook:
@@ -38,18 +58,11 @@ When given a playbook:
 1. Identify the required roles.
 2. Assign each role a stable agent name.
 3. Define each role's responsibilities.
-4. Define event rules for each role:
-   - When to send a `task`.
-   - When to send a `question`.
-   - When to send a `reply`.
-   - What to do after `recv_from_bus` returns a message.
-5. Produce one session header prompt per agent.
-6. Tell the user how to start each session:
-   - open a separate pi process per agent;
-   - paste or inject the corresponding session header;
-   - call `register_self`;
-   - call `wait_bus`.
-7. If the user asks you to coordinate directly, call `get_all_agents()` first, send header prompts only to registered target agents via `send_to_bus`, and report blockers for missing agents.
+4. Compose the public background (shared context, goal, constraints, coordination rules) and the per-agent assignment map.
+5. Ensure every participating agent session is started: open a separate pi process per agent, inject its session header (template below), then the agent calls `register_self` and `wait_bus`.
+6. Publish with `publish_task(background, assignments)`. If the bus rejects the publish because an agent is busy or unknown, adjust the assignment map and retry, or report blockers to the user.
+7. Agents handle their assignments and call `complete_task`; the task archives automatically when all assignments are done.
+8. If the user asks you to coordinate directly instead, call `get_all_agents()` first and send header prompts only to registered target agents via `send_to_bus`, reporting blockers for missing agents.
 
 ## Session Header Prompt Template
 
