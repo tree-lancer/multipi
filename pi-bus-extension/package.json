@@ -4,7 +4,6 @@
   "private": true,
   "description": "Pi multi-agent bus extension with sqlite-backed central service.",
   "pi": {
-    "extensions": ["./index.ts"],
-    "skills": ["./skills"]
+    "extensions": ["./index.ts"]
   }
 }

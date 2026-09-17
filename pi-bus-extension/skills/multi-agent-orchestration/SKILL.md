@@ -49,7 +49,7 @@ When given a playbook:
    - paste or inject the corresponding session header;
    - call `register_self`;
    - call `wait_bus`.
-7. If the user asks you to coordinate directly, send the header prompts to the target agents via `send_to_bus`.
+7. If the user asks you to coordinate directly, call `get_all_agents()` first, send header prompts only to registered target agents via `send_to_bus`, and report blockers for missing agents.
 
 ## Session Header Prompt Template
 
@@ -63,10 +63,12 @@ You are collaborating with:
 - {peer_agent_2}: {peer_role_2}
 
 Register yourself with:
-register_self({agent_name}, {description})
+register_self("{agent_name}", "{description}")
 
 Then start the background listener with:
 wait_bus()
+
+When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
 
 Mission:
 {mission}
@@ -120,6 +122,8 @@ register_self("design-agent", "Design agent responsible for decomposing requirem
 Then start the background listener with:
 wait_bus()
 
+When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
+
 Mission:
 Break the user's task into implementable design steps, keep the implementation aligned with intent, and adjust the next step based on checker feedback.
 
@@ -151,6 +155,8 @@ register_self("implementation-agent", "Implementation agent responsible for impl
 Then start the background listener with:
 wait_bus()
 
+When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
+
 Mission:
 Implement the current design task faithfully, keep changes scoped, and report completed work for checking.
 
@@ -181,6 +187,8 @@ register_self("check-agent", "Checking agent responsible for verifying implement
 
 Then start the background listener with:
 wait_bus()
+
+When you see a `[multi-agent bus] ... pending` prompt, immediately call `recv_from_bus()` and process every returned message according to subject.
 
 Mission:
 Check whether implementation-agent's changes satisfy design-agent's intent and report actionable feedback.

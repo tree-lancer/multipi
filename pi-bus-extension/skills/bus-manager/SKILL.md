@@ -15,6 +15,10 @@ Use this skill when the task involves operating the global multi-agent bus servi
 - The default HTTP endpoint is `http://127.0.0.1:43871`.
 - The bus command is installed by this project as `bus`.
 
+## Safety
+
+The bus is shared by all pi agents for the current user account. Only run `bus down` or `bus restart` when the user explicitly asks for it, or after confirming with the user, because it can interrupt other agents. Treat `bus history` output as sensitive: it may contain message contents and attachment file paths.
+
 ## Commands
 
 Start the global bus service:
