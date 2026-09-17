@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
-import type { AgentState } from "./agents";
-import type { BusClient } from "./client";
-import type { BusStats, BusStatusUI } from "./stats";
+import type { AgentState } from "../core/agents";
+import type { BusClient } from "../core/client";
+import type { BusStats, BusStatusUI } from "../core/stats";
 
 export const RecvFromBusParams = Type.Object({
 	limit: Type.Optional(

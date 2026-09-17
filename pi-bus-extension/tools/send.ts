@@ -1,8 +1,8 @@
 import { Type, type Static } from "typebox";
-import type { AgentState } from "./agents";
-import type { BusClient } from "./client";
-import { BusMessagePayloadSchema, validatePayload } from "./protocol";
-import type { BusStats, BusStatusUI } from "./stats";
+import type { AgentState } from "../core/agents";
+import type { BusClient } from "../core/client";
+import { BusMessagePayloadSchema, validatePayload } from "../core/protocol";
+import type { BusStats, BusStatusUI } from "../core/stats";
 
 export const SendToBusParams = Type.Object({
 	dest_agent_names: Type.Array(Type.String(), {

@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { AgentIdentity, AgentState } from "./agents";
-import type { BusClient, BusMessageEvent } from "./client";
-import type { BusStats, BusStatusUI } from "./stats";
+import type { AgentIdentity, AgentState } from "../core/agents";
+import type { BusClient, BusMessageEvent } from "../core/client";
+import type { BusStats, BusStatusUI } from "../core/stats";
 
 export const WaitBusParams = Type.Object({});
 

@@ -1,13 +1,13 @@
 import { Type } from "typebox";
-import type { BusClient } from "./client";
-import type { BusStats, BusStatusUI } from "./stats";
+import type { BusClient } from "../core/client";
+import type { BusStats, BusStatusUI } from "../core/stats";
 import {
 	AgentState,
 	GetAllAgentsParams,
 	type GetAllAgentsInput,
 	RegisterSelfParams,
 	type RegisterSelfInput,
-} from "./agents";
+} from "../core/agents";
 
 export function createRegisterSelfTool(client: BusClient, state: AgentState, stats: BusStats) {
 	return {

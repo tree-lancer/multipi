@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { AgentState } from "./agents";
-import { createGetAllAgentsTool, createRegisterSelfTool, createWhoAmITool } from "./agent-tools";
-import { BusClient } from "./client";
-import { createRecvFromBusTool } from "./recv";
-import { createSendToBusTool } from "./send";
-import { BusStats } from "./stats";
-import { createWaitBusTool } from "./wait";
+import { AgentState } from "./core/agents";
+import { createGetAllAgentsTool, createRegisterSelfTool, createWhoAmITool } from "./tools/agent-tools";
+import { BusClient } from "./core/client";
+import { createRecvFromBusTool } from "./tools/recv";
+import { createSendToBusTool } from "./tools/send";
+import { BusStats } from "./core/stats";
+import { createWaitBusTool } from "./tools/wait";
 
 /**
  * Pi Multi-Agent Bus Extension
