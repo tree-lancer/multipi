@@ -93,25 +93,33 @@ function history(args) {
 
 function formatOnelineHistory(rows) {
   return rows.map((row) => {
+    const id = shortId(row.id);
+    const route = `${row.sender} -> ${row.dest}`;
     const status = row.delivered_at ? "delivered" : "pending";
-    const content = truncate(oneLine(row.content), 96);
-    return `${row.created_at} #${row.id} ${row.sender} -> ${row.dest} [${row.subject}/${status}] ${content}`;
+    const content = truncate(oneLine(row.content), 88);
+    return `${color("yellow", id)} ${color(subjectColor(row.subject), row.subject)} ${route} ${color(statusColor(status), `[${status}]`)} ${content}`;
   }).join("\n") + (rows.length ? "\n" : "");
 }
 
 function formatFullHistory(rows) {
   return rows.map((row) => {
-    const status = row.delivered_at ? `delivered ${row.delivered_at}` : "pending";
+    const status = row.delivered_at ? "delivered" : "pending";
     const attachments = safeJson(row.attachment_json, []);
+    const deliveredLine = row.delivered_at ? [`Delivered: ${row.delivered_at}`] : [];
+    const attachmentLines = attachments.length > 0
+      ? ["Attachments:", ...attachments.map((file) => `    ${file}`)]
+      : [];
+
     return [
-      `#${row.id} ${row.created_at}`,
-      `from: ${row.sender}`,
-      `to: ${row.dest}`,
-      `subject: ${row.subject}`,
-      `status: ${status}`,
-      `attachment: ${JSON.stringify(attachments)}`,
-      "content:",
-      indent(row.content || ""),
+      `${color("yellow", "message")} ${color("yellow", fullId(row.id))}`,
+      `Author: ${row.sender} -> ${row.dest}`,
+      `Date:   ${row.created_at}`,
+      `Type:   ${color(subjectColor(row.subject), row.subject)}`,
+      `Status: ${color(statusColor(status), status)}`,
+      ...deliveredLine,
+      ...attachmentLines,
+      "",
+      indent(row.content || "", 4),
     ].join("\n");
   }).join("\n\n") + (rows.length ? "\n" : "");
 }
@@ -160,8 +168,43 @@ function truncate(text, width) {
   return `${text.slice(0, Math.max(0, width - 1))}…`;
 }
 
-function indent(text) {
-  return String(text).split("\n").map((line) => `  ${line}`).join("\n");
+function indent(text, spaces = 2) {
+  const prefix = " ".repeat(spaces);
+  return String(text).split("\n").map((line) => `${prefix}${line}`).join("\n");
+}
+
+function shortId(id) {
+  return Number(id).toString(16).padStart(7, "0");
+}
+
+function fullId(id) {
+  return Number(id).toString(16).padStart(16, "0");
+}
+
+function subjectColor(subject) {
+  if (subject === "task") return "cyan";
+  if (subject === "question") return "magenta";
+  if (subject === "reply") return "green";
+  return "reset";
+}
+
+function statusColor(status) {
+  return status === "delivered" ? "dim" : "red";
+}
+
+function color(name, text) {
+  if (!process.stdout.isTTY || process.env.NO_COLOR) return text;
+  const codes = {
+    reset: [0, 0],
+    dim: [2, 22],
+    red: [31, 39],
+    green: [32, 39],
+    yellow: [33, 39],
+    cyan: [36, 39],
+    magenta: [35, 39],
+  };
+  const code = codes[name] || codes.reset;
+  return `\x1b[${code[0]}m${text}\x1b[${code[1]}m`;
 }
 
 function safeJson(text, fallback) {
