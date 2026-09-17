@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AgentState } from "./core/agents";
 import { createGetAllAgentsTool, createRegisterSelfTool, createWhoAmITool } from "./tools/agent-tools";
@@ -6,6 +8,8 @@ import { createRecvFromBusTool } from "./tools/recv";
 import { createSendToBusTool } from "./tools/send";
 import { BusStats } from "./core/stats";
 import { createWaitBusTool } from "./tools/wait";
+
+const baseDir = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Pi Multi-Agent Bus Extension
@@ -24,6 +28,10 @@ export default function piBusExtension(pi: ExtensionAPI) {
 	const state = new AgentState();
 	const stats = new BusStats();
 	const waitBus = createWaitBusTool(pi, client, state, stats);
+
+	pi.on("resources_discover", () => ({
+		skillPaths: [join(baseDir, "skills")],
+	}));
 
 	pi.on("session_start", async (_event, ctx) => {
 		const sessionId = ctx.sessionManager.getSessionId();
