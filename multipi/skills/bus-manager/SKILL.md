@@ -27,6 +27,12 @@ Start the global bus service:
 bus up
 ```
 
+**Recommended**: Show a fake IM interface to view message flow:
+
+```bash
+bus dashboard
+```
+
 Stop the global bus service:
 
 ```bash
@@ -56,6 +62,7 @@ Show compact one-line message history, newest first:
 ```bash
 bus history --oneline
 ```
+
 
 ## Agent Workflow
 
