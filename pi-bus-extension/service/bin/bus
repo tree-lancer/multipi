@@ -6,16 +6,19 @@ const { spawn, spawnSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = process.env.PI_BUS_DATA_DIR || path.join(os.homedir(), ".pi", "bus");
+const DB_PATH = process.env.PI_BUS_DB || path.join(DATA_DIR, "bus.sqlite");
 const PID_PATH = process.env.PI_BUS_PID || path.join(DATA_DIR, "bus.pid");
 const LOG_PATH = process.env.PI_BUS_LOG || path.join(DATA_DIR, "bus.log");
 const SERVER = path.join(ROOT, "server.js");
 
 const cmd = process.argv[2] || "help";
+const args = process.argv.slice(3);
 
 if (cmd === "up") up();
 else if (cmd === "down") down();
 else if (cmd === "restart") { down({ quiet: true }); up(); }
 else if (cmd === "status") status();
+else if (cmd === "history") history(args);
 else help();
 
 function up() {
@@ -58,8 +61,76 @@ function status() {
   else console.log("bus is not running");
 }
 
+function history(args) {
+  const oneline = args.includes("--oneline");
+  const unknown = args.filter((arg) => arg !== "--oneline");
+  if (unknown.length > 0) {
+    console.error(`unknown history option: ${unknown[0]}`);
+    process.exit(2);
+  }
+
+  ensureDependencies();
+  if (!fs.existsSync(DB_PATH)) {
+    console.error(`bus database not found: ${DB_PATH}`);
+    process.exit(1);
+  }
+
+  const Database = require(require.resolve("better-sqlite3", { paths: [ROOT] }));
+  const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
+  try {
+    const rows = db.prepare(`
+      SELECT id, sender, dest, subject, content, attachment_json, created_at, delivered_at
+      FROM messages
+      ORDER BY id DESC
+    `).all();
+
+    const text = oneline ? formatOnelineHistory(rows) : formatFullHistory(rows);
+    page(text || "(no bus messages)\n");
+  } finally {
+    db.close();
+  }
+}
+
+function formatOnelineHistory(rows) {
+  return rows.map((row) => {
+    const status = row.delivered_at ? "delivered" : "pending";
+    const content = truncate(oneLine(row.content), 96);
+    return `${row.created_at} #${row.id} ${row.sender} -> ${row.dest} [${row.subject}/${status}] ${content}`;
+  }).join("\n") + (rows.length ? "\n" : "");
+}
+
+function formatFullHistory(rows) {
+  return rows.map((row) => {
+    const status = row.delivered_at ? `delivered ${row.delivered_at}` : "pending";
+    const attachments = safeJson(row.attachment_json, []);
+    return [
+      `#${row.id} ${row.created_at}`,
+      `from: ${row.sender}`,
+      `to: ${row.dest}`,
+      `subject: ${row.subject}`,
+      `status: ${status}`,
+      `attachment: ${JSON.stringify(attachments)}`,
+      "content:",
+      indent(row.content || ""),
+    ].join("\n");
+  }).join("\n\n") + (rows.length ? "\n" : "");
+}
+
+function page(text) {
+  if (!process.stdout.isTTY) {
+    process.stdout.write(text);
+    return;
+  }
+
+  const pager = process.env.PAGER || "less -R";
+  const child = spawn(pager, { shell: true, stdio: ["pipe", "inherit", "inherit"] });
+  child.stdin.end(text);
+  child.on("exit", (code) => process.exit(code || 0));
+}
+
 function help() {
-  console.log("Usage: bus <up|down|restart|status>");
+  console.log("Usage: bus <up|down|restart|status|history>");
+  console.log("       bus history [--oneline]");
 }
 
 function readPid() {
@@ -78,4 +149,21 @@ function ensureDependencies() {
   console.log("Installing bus service dependencies...");
   const result = spawnSync("npm", ["install", "--omit=dev"], { cwd: ROOT, stdio: "inherit" });
   if (result.status !== 0) process.exit(result.status || 1);
+}
+
+function oneLine(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function truncate(text, width) {
+  if (text.length <= width) return text;
+  return `${text.slice(0, Math.max(0, width - 1))}…`;
+}
+
+function indent(text) {
+  return String(text).split("\n").map((line) => `  ${line}`).join("\n");
+}
+
+function safeJson(text, fallback) {
+  try { return JSON.parse(text); } catch { return fallback; }
 }
