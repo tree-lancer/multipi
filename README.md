@@ -12,6 +12,10 @@ Features:
 Install:
 
 ```bash
+# Install from GitHub
+curl -fsSL https://raw.githubusercontent.com/tree-lancer/multipi/main/scripts/install-remote.sh | sh
+
+# Or install from source code
 ./install.sh --dev
 # or
 ./install.sh --release
