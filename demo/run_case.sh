@@ -31,6 +31,7 @@ Options:
   --duration <seconds>   Override how long to let the case run (default: from case.env)
   --keep-running         Do not stop agents/bus after the run; print how to attach/stop manually
   --port <port>          Bus service port (default: 43900)
+  --no-dashboard-bridge  Do not mirror this run into the multipi dashboard, even if it's running
   -h, --help             Show this help
 
 Cases are directories under demo/ containing a case.env file, e.g.:
@@ -42,6 +43,7 @@ CASE_NAME=""
 OVERRIDE_DURATION=""
 KEEP_RUNNING=0
 BUS_PORT=43900
+ENABLE_DASHBOARD_BRIDGE=1
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -56,6 +58,10 @@ while [ $# -gt 0 ]; do
 	--port)
 		BUS_PORT="$2"
 		shift 2
+		;;
+	--no-dashboard-bridge)
+		ENABLE_DASHBOARD_BRIDGE=0
+		shift
 		;;
 	-h | --help)
 		usage
@@ -120,6 +126,13 @@ BUS_LOG="$RUN_DIR/bus-service.log"
 METRICS_LOG="$RUN_DIR/wakeup-metrics.jsonl"
 BUS_PID_FILE="$RUN_DIR/bus.pid"
 
+DASHBOARD_URL="http://127.0.0.1:${MULTIPI_DASHBOARD_PORT:-43872}"
+DASHBOARD_BRIDGE_SCRIPT="$REPO_ROOT/multipi/ext/dashboard/scripts/multipi-bridge.mjs"
+DASHBOARD_BRIDGE_LOG="$RUN_DIR/dashboard-bridge.log"
+DASHBOARD_BRIDGE_PID_FILE="$RUN_DIR/dashboard-bridge.pid"
+DASHBOARD_BRIDGE_STATE="$RUN_DIR/dashboard-bridge-state.json"
+DASHBOARD_BRIDGE_ACTIVE=0
+
 mkdir -p "$BUS_DATA_DIR"
 
 demo_log "case: $CASE_NAME"
@@ -150,6 +163,9 @@ cleanup() {
 		[ -f "$pid_file" ] || continue
 		"$COMMON_DIR/stop_agent.sh" "$(cat "$pid_file")" 8
 	done
+	if [ "$DASHBOARD_BRIDGE_ACTIVE" = "1" ]; then
+		stop_pid "$(read_pid_file "$DASHBOARD_BRIDGE_PID_FILE")" 3
+	fi
 	stop_pid "$BUS_SERVICE_PID" 5
 }
 trap cleanup EXIT
@@ -159,6 +175,29 @@ if ! wait_for_bus_health "$BUS_URL" 15; then
 	exit 1
 fi
 demo_log "bus service is healthy"
+
+# --- optionally mirror this run into the multipi dashboard, tagged as demo ---
+if [ "$ENABLE_DASHBOARD_BRIDGE" = "1" ]; then
+	if dashboard_is_running "$DASHBOARD_URL"; then
+		if [ -f "$DASHBOARD_BRIDGE_SCRIPT" ]; then
+			demo_log "dashboard detected at $DASHBOARD_URL; mirroring this run as a tagged 'demo' chat"
+			(
+				PI_BUS_URL="$BUS_URL" \
+					MULTIPI_DASHBOARD_URL="$DASHBOARD_URL" \
+					MULTIPI_BRIDGE_STATE_PATH="$DASHBOARD_BRIDGE_STATE" \
+					MULTIPI_BRIDGE_EXTRA_TAG="demo" \
+					MULTIPI_BRIDGE_TITLE_PREFIX="[demo] " \
+					nohup node "$DASHBOARD_BRIDGE_SCRIPT" >"$DASHBOARD_BRIDGE_LOG" 2>&1 &
+				echo $! >"$DASHBOARD_BRIDGE_PID_FILE"
+			)
+			DASHBOARD_BRIDGE_ACTIVE=1
+		else
+			demo_log "dashboard bridge script not found (dashboard submodule not checked out); skipping mirroring"
+		fi
+	else
+		demo_log "no dashboard detected at $DASHBOARD_URL; skipping mirroring (run 'bus dashboard' first to see this run there)"
+	fi
+fi
 
 # --- spawn agents ---
 i=0
@@ -198,6 +237,10 @@ if [ "$KEEP_RUNNING" = "1" ]; then
 	demo_log "watch history: PI_BUS_URL=$BUS_URL PI_BUS_DATA_DIR=$BUS_DATA_DIR bus history --oneline"
 	demo_log "stop agents:   for f in $RUN_DIR/agent-*.pid; do $COMMON_DIR/stop_agent.sh \"\$(cat \$f)\"; done"
 	demo_log "stop bus:      kill $BUS_SERVICE_PID"
+	if [ "$DASHBOARD_BRIDGE_ACTIVE" = "1" ]; then
+		demo_log "stop bridge:   kill $(read_pid_file "$DASHBOARD_BRIDGE_PID_FILE")"
+		demo_log "look for a chat tagged 'demo' in the dashboard (title starts with '[demo] ')"
+	fi
 	trap - EXIT
 	exit 0
 fi
@@ -211,6 +254,9 @@ for pid_file in "$RUN_DIR"/agent-*.pid; do
 	"$COMMON_DIR/stop_agent.sh" "$(cat "$pid_file")" 8
 done
 trap - EXIT
+if [ "$DASHBOARD_BRIDGE_ACTIVE" = "1" ]; then
+	stop_pid "$(read_pid_file "$DASHBOARD_BRIDGE_PID_FILE")" 3
+fi
 stop_pid "$BUS_SERVICE_PID" 5
 
 demo_log "analyzing run..."
@@ -231,3 +277,6 @@ cat "$SUMMARY_TXT" >&2
 demo_log "report written to: $REPORT_JSON"
 demo_log "summary written to: $SUMMARY_TXT"
 demo_log "full run artifacts: $RUN_DIR"
+if [ "$DASHBOARD_BRIDGE_ACTIVE" = "1" ]; then
+	demo_log "this run's messages were mirrored into the dashboard as a chat tagged 'demo' (stays there after this run ends)"
+fi

@@ -16,15 +16,19 @@ This will:
 
 1. start a **fully isolated** bus service (its own port, sqlite file, and
    `wakeup-metrics.jsonl` — none of it touches `~/.pi/bus`),
-2. spawn one non-interactive `pi` agent per participant defined in the
+2. if a multipi dashboard is already running locally, start a second,
+   separate bridge process that mirrors this run's messages into it as a
+   chat tagged `demo` (see "Mirroring into the dashboard" below) — the run's
+   isolated bus itself is unaffected either way,
+3. spawn one non-interactive `pi` agent per participant defined in the
    case, each kept alive under a pseudo-TTY (see below for why),
-3. wait for every agent to `register_self` and come online,
-4. let the case run for a configured duration (`CASE_DURATION_SECONDS` in
+4. wait for every agent to `register_self` and come online,
+5. let the case run for a configured duration (`CASE_DURATION_SECONDS` in
    `case.env`, or `--duration <seconds>`),
-5. stop every agent **gracefully** (`SIGTERM`, not `SIGKILL`) so `pi`'s
+6. stop every agent **gracefully** (`SIGTERM`, not `SIGKILL`) so `pi`'s
    `session_shutdown` handler runs and flushes wakeup metrics,
-6. stop the bus service,
-7. analyze the run and print/save a report.
+7. stop the bus service (and the dashboard bridge, if it was started),
+8. analyze the run and print/save a report.
 
 All run artifacts land under `demo/.runs/<case>/<timestamp>/` (git-ignored):
 agent logs, the bus sqlite file, `wakeup-metrics.jsonl`, and `report.json`.
@@ -32,9 +36,10 @@ agent logs, the bus sqlite file, `wakeup-metrics.jsonl`, and `report.json`.
 Useful flags:
 
 ```bash
-./run_case.sh guess-celebrity-game --duration 60      # shorter run for iterating
-./run_case.sh guess-celebrity-game --port 43950        # avoid a port clash
-./run_case.sh guess-celebrity-game --keep-running      # leave it running, print how to attach/stop
+./run_case.sh guess-celebrity-game --duration 60          # shorter run for iterating
+./run_case.sh guess-celebrity-game --port 43950            # avoid a port clash
+./run_case.sh guess-celebrity-game --keep-running          # leave it running, print how to attach/stop
+./run_case.sh guess-celebrity-game --no-dashboard-bridge   # never mirror into the dashboard for this run
 ```
 
 ## Directory layout
@@ -79,6 +84,51 @@ Each run gets its own `PI_BUS_PORT` / `PI_BUS_DATA_DIR` / sqlite file, so:
 - it never interferes with a bus you might be running interactively,
 - runs are reproducible and don't accumulate history across cases,
 - `wakeup-metrics.jsonl` for a run only contains that run's agents.
+
+## Mirroring into the dashboard, tagged `demo`
+
+The isolated bus above stays isolated — `run_case.sh` never sends demo
+traffic through your primary `~/.pi/bus`. Instead, if a multipi dashboard
+happens to be already running locally (`bus dashboard`, checked via
+`GET /api/v1/health` on `MULTIPI_DASHBOARD_PORT`, default `43872`),
+`run_case.sh` starts an extra, independent copy of
+`multipi/ext/dashboard/scripts/multipi-bridge.mjs` pointed at the run's
+isolated bus instead of the default one:
+
+```bash
+PI_BUS_URL=http://127.0.0.1:<run's port> \
+MULTIPI_DASHBOARD_URL=http://127.0.0.1:43872 \
+MULTIPI_BRIDGE_STATE_PATH=<run dir>/dashboard-bridge-state.json \
+MULTIPI_BRIDGE_EXTRA_TAG=demo \
+MULTIPI_BRIDGE_TITLE_PREFIX='[demo] ' \
+node multipi/ext/dashboard/scripts/multipi-bridge.mjs
+```
+
+Three things keep this from ever touching real agent traffic or its state:
+
+- `PI_BUS_URL` points at the run's own isolated bus, not the default one —
+  this bridge instance never reads from `~/.pi/bus`.
+- `MULTIPI_BRIDGE_STATE_PATH` gives this bridge instance its own
+  cursor/group bookkeeping file under the run directory, so it cannot
+  collide with (or be starved by) a bridge instance mirroring the default
+  bus.
+- `MULTIPI_BRIDGE_EXTRA_TAG=demo` and `MULTIPI_BRIDGE_TITLE_PREFIX='[demo] '`
+  make every chat this bridge creates carry a `demo` tag and a `[demo] `
+  title prefix. The dashboard UI (`chat-list.tsx`, `chat-header.tsx`) reads
+  `chat.tags.includes('demo')` and renders a small amber "demo" pill next to
+  the title wherever it appears, so demo traffic is visually unmistakable
+  from real multi-agent coordination.
+
+If no dashboard is running, or `--no-dashboard-bridge` is passed,
+`run_case.sh` skips this step entirely — the case still runs exactly the
+same, it's just not mirrored anywhere. The dashboard submodule
+(`multipi/ext/dashboard`) is optional infrastructure; a demo case run never
+depends on it being present or built.
+
+The bridge process is stopped alongside the run's bus service on normal
+completion or on `Ctrl-C`; with `--keep-running`, `run_case.sh` prints the
+pid to stop it manually. The chat it created in the dashboard is not
+archived automatically — it stays there afterward as a record of that run.
 
 ## Why a pseudo-TTY for non-interactive agents (`expect`)
 
@@ -155,3 +205,6 @@ agent" for that agent instead of fabricating a number.
 - `multipi/service/node_modules` installed (`npm install` in
   `multipi/service`) — `analyze_run.cjs` reuses `better-sqlite3` from there
   instead of duplicating a `node_modules` under `demo/`.
+- Optional: a running multipi dashboard (`bus dashboard`,
+  `multipi/ext/dashboard` submodule checked out and built) if you want run
+  traffic mirrored there tagged `demo`. Not required to run a case.

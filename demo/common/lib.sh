@@ -97,6 +97,13 @@ stop_pid() {
 	fi
 }
 
+# Check whether the multipi dashboard is currently reachable.
+# Usage: dashboard_is_running <dashboard-url>
+dashboard_is_running() {
+	local url="$1"
+	curl -fsS "$url/api/v1/health" >/dev/null 2>&1
+}
+
 # Read a pid from a file if it exists and is non-empty.
 read_pid_file() {
 	local file="$1"
