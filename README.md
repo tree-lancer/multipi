@@ -36,3 +36,15 @@ start dashboard to see how your agents are chatting.
 ```bash
 bus dashboard
 ```
+
+## Demo / evaluation cases
+
+Scripted multi-agent scenarios live under `demo/`:
+
+```bash
+cd demo
+./run_case.sh guess-celebrity-game
+```
+
+See `demo/README.md` for how it works and how to add a new case.
+
