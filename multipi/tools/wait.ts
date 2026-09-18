@@ -3,21 +3,33 @@ import { Type, type Static } from "typebox";
 import type { AgentIdentity, AgentState } from "../core/agents";
 import type { BusClient, BusMessageEvent } from "../core/client";
 import type { BusStats, BusStatusUI } from "../core/stats";
+import type { WakeupMetrics, WakeupPolicy, WakeupPolicyConfig } from "../core/wakeup";
 
 export const WaitBusParams = Type.Object({});
 
 export type WaitBusInput = Static<typeof WaitBusParams>;
 
-export function createWaitBusTool(pi: ExtensionAPI, client: BusClient, state: AgentState, stats: BusStats) {
+export function createWaitBusTool(
+	pi: ExtensionAPI,
+	client: BusClient,
+	state: AgentState,
+	stats: BusStats,
+	wakeupPolicy: WakeupPolicy,
+	wakeupMetrics: WakeupMetrics,
+	wakeupConfig: WakeupPolicyConfig,
+) {
 	let controller: AbortController | undefined;
 	let runningFor: string | undefined;
 	let active = true;
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const stop = () => {
 		active = false;
 		controller?.abort();
 		controller = undefined;
 		runningFor = undefined;
+		if (debounceTimer) clearTimeout(debounceTimer);
+		debounceTimer = undefined;
 	};
 
 	const tool = {
@@ -44,8 +56,22 @@ export function createWaitBusTool(pi: ExtensionAPI, client: BusClient, state: Ag
 			controller = new AbortController();
 			runningFor = self.name;
 			active = true;
+			wakeupPolicy.reset(self.name);
 			stats.update(ctx?.ui);
-			void backgroundEventLoop(pi, client, state, self, controller.signal, () => active);
+			void backgroundEventLoop(
+				pi,
+				client,
+				state,
+				self,
+				controller.signal,
+				() => active,
+				wakeupPolicy,
+				wakeupMetrics,
+				wakeupConfig,
+				(timer) => {
+					debounceTimer = timer;
+				},
+			);
 
 			return {
 				content: [{ type: "text" as const, text: `Background bus event listener started for '${self.name}'.` }],
@@ -64,15 +90,32 @@ async function backgroundEventLoop(
 	identity: AgentIdentity,
 	signal: AbortSignal,
 	isActive: () => boolean,
+	wakeupPolicy: WakeupPolicy,
+	wakeupMetrics: WakeupMetrics,
+	wakeupConfig: WakeupPolicyConfig,
+	setDebounceTimer: (timer: ReturnType<typeof setTimeout> | undefined) => void,
 ): Promise<void> {
+	let latestEvent: BusMessageEvent | undefined;
+
+	const flush = () => {
+		setDebounceTimer(undefined);
+		if (!latestEvent) return;
+		const event = latestEvent;
+		latestEvent = undefined;
+		handleBusEvent(pi, state, identity, event, isActive, wakeupPolicy, wakeupMetrics);
+	};
+
+	const onEvent = (event: BusMessageEvent) => {
+		if (event.type !== "pending") return;
+		latestEvent = event;
+		const timer = setTimeout(flush, wakeupConfig.debounceMs);
+		setDebounceTimer(timer);
+	};
+
 	while (!signal.aborted && isActive()) {
 		try {
 			await client.registerAgent(identity, state.getSessionId());
-			await client.subscribeMessages(
-				identity.name,
-				(event) => handleBusEvent(pi, state, identity, event, isActive),
-				signal,
-			);
+			await client.subscribeMessages(identity.name, onEvent, signal);
 			if (!signal.aborted && isActive()) await sleep(1000, signal).catch(() => undefined);
 		} catch (_error) {
 			if (signal.aborted || !isActive()) return;
@@ -87,13 +130,21 @@ function handleBusEvent(
 	identity: AgentIdentity,
 	event: BusMessageEvent,
 	isActive: () => boolean,
+	wakeupPolicy: WakeupPolicy,
+	wakeupMetrics: WakeupMetrics,
 ): void {
-	if (!isActive() || state.get()?.name !== identity.name || event.type !== "pending" || event.count <= 0) return;
+	if (!isActive() || state.get()?.name !== identity.name) return;
 
-	const prompt = `[bus] ${event.count} message(s) pending for '${identity.name}'`;
+	const decision = wakeupPolicy.decide(event);
+	if (decision.action === "skip") {
+		if (decision.reason === "no-advance") wakeupMetrics.recordSkippedDuplicate();
+		return;
+	}
+
+	wakeupMetrics.recordNotify(identity.name, event.bySender.length);
 
 	try {
-		pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+		pi.sendUserMessage(decision.text, { deliverAs: "followUp" });
 	} catch {
 		// The extension runtime may have been replaced or reloaded between the
 		// event callback and sendUserMessage. Session shutdown aborts the loop;

@@ -11,6 +11,8 @@ import { createWaitBusTool } from "./tools/wait";
 import { TaskClient } from "./ext/task-dispatch/client";
 import { registerMultipiTasksCommand } from "./ext/task-dispatch/command";
 import { createTaskTools } from "./ext/task-dispatch/tools";
+import { resolveWakeupPolicyConfig, WakeupMetrics, WakeupPolicy, persistWakeupMetrics } from "./core/wakeup";
+import { registerWakeupStatsCommand } from "./tools/wakeup-stats-command";
 
 const baseDir = dirname(fileURLToPath(import.meta.url));
 
@@ -36,7 +38,10 @@ export default function piBusExtension(pi: ExtensionAPI) {
 	const client = new BusClient();
 	const state = new AgentState();
 	const stats = new BusStats();
-	const waitBus = createWaitBusTool(pi, client, state, stats);
+	const wakeupConfig = resolveWakeupPolicyConfig();
+	const wakeupPolicy = new WakeupPolicy(wakeupConfig);
+	const wakeupMetrics = new WakeupMetrics();
+	const waitBus = createWaitBusTool(pi, client, state, stats, wakeupPolicy, wakeupMetrics, wakeupConfig);
 	const taskClient = new TaskClient(client);
 	const taskTools = createTaskTools(taskClient, state);
 
@@ -66,6 +71,8 @@ export default function piBusExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", (_event, ctx) => {
 		waitBus.stop();
 		stats.clear(ctx.ui);
+		const self = state.get();
+		if (self) persistWakeupMetrics(self.name, state.getSessionId(), wakeupMetrics.snapshot());
 	});
 
 	pi.registerTool(createRegisterSelfTool(client, state, stats));
@@ -73,10 +80,11 @@ export default function piBusExtension(pi: ExtensionAPI) {
 	pi.registerTool(createGetAllAgentsTool(client, state));
 	pi.registerTool(createSendToBusTool(client, state, stats));
 	pi.registerTool(waitBus.tool);
-	pi.registerTool(createRecvFromBusTool(client, state, stats));
+	pi.registerTool(createRecvFromBusTool(client, state, stats, wakeupMetrics));
 	pi.registerTool(taskTools.publishTask);
 	pi.registerTool(taskTools.getTask);
 	pi.registerTool(taskTools.completeTask);
 	pi.registerTool(taskTools.killTask);
 	registerMultipiTasksCommand(pi, taskClient);
+	registerWakeupStatsCommand(pi, wakeupMetrics);
 }

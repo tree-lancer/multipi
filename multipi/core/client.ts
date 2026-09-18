@@ -1,15 +1,12 @@
 import type { AgentIdentity, AgentRecord } from "./agents";
 import type { BusDeliveredMessage, BusMessagePayload } from "./protocol";
+import type { PendingBatch } from "./wakeup";
 
 export type BusClientOptions = {
 	baseUrl?: string;
 };
 
-export type BusMessageEvent = {
-	type: "pending";
-	agent: string;
-	count: number;
-};
+export type BusMessageEvent = { type: "pending" } & PendingBatch;
 
 export class BusClient {
 	readonly baseUrl: string;
@@ -51,10 +48,10 @@ export class BusClient {
 		});
 	}
 
-	async recvMessages(agent: string, limit: number): Promise<BusDeliveredMessage[]> {
+	async recvMessages(agent: string, limit: number, from?: string): Promise<BusDeliveredMessage[]> {
 		return this.request<BusDeliveredMessage[]>("/messages/recv", {
 			method: "POST",
-			body: JSON.stringify({ agent, limit }),
+			body: JSON.stringify({ agent, limit, from }),
 		});
 	}
 

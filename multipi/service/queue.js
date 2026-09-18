@@ -12,8 +12,23 @@ function createQueue(db) {
     LIMIT ?
   `);
 
+  const recvSelectFrom = db.prepare(`
+    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, created_at
+    FROM messages
+    WHERE dest = ? AND sender = ? AND delivered_at IS NULL
+    ORDER BY id
+    LIMIT ?
+  `);
+
   const markDelivered = db.prepare(`UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`);
   const pendingCount = db.prepare(`SELECT COUNT(*) AS count FROM messages WHERE dest = ? AND delivered_at IS NULL`);
+  const pendingMaxId = db.prepare(`SELECT MAX(id) AS maxId FROM messages WHERE dest = ? AND delivered_at IS NULL`);
+  const pendingBySender = db.prepare(`
+    SELECT sender, subject, COUNT(*) AS count
+    FROM messages
+    WHERE dest = ? AND delivered_at IS NULL
+    GROUP BY sender, subject
+  `);
 
   const sinceSelect = db.prepare(`
     SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, created_at
@@ -53,9 +68,9 @@ function createQueue(db) {
     return { ids, messages };
   });
 
-  const recv = db.transaction((agent, limit) => {
+  const recv = db.transaction((agent, limit, from) => {
     const now = new Date().toISOString();
-    const rows = recvSelect.all(agent, limit);
+    const rows = from ? recvSelectFrom.all(agent, from, limit) : recvSelect.all(agent, limit);
     for (const row of rows) markDelivered.run(now, row.id);
     return rows.map(rowToMessage);
   });
@@ -65,11 +80,28 @@ function createQueue(db) {
       const { ids, messages } = sendMany(sender, dests, message);
       return { inserted: ids.length, ids, messages };
     },
-    recv(agent, limit) {
-      return recv(agent, Math.max(1, Math.floor(limit || 10)));
+    recv(agent, limit, from) {
+      return recv(agent, Math.max(1, Math.floor(limit || 10)), from || undefined);
     },
     count(agent) {
       return Number(pendingCount.get(agent).count || 0);
+    },
+    pendingBatch(agent) {
+      const maxId = Number(pendingMaxId.get(agent).maxId || 0);
+      const rows = pendingBySender.all(agent);
+      const bySenderMap = new Map();
+      for (const row of rows) {
+        let entry = bySenderMap.get(row.sender);
+        if (!entry) {
+          entry = { sender: row.sender, count: 0, subjects: {} };
+          bySenderMap.set(row.sender, entry);
+        }
+        entry.count += row.count;
+        entry.subjects[row.subject] = (entry.subjects[row.subject] || 0) + row.count;
+      }
+      const bySender = [...bySenderMap.values()];
+      const totalCount = bySender.reduce((sum, entry) => sum + entry.count, 0);
+      return { agent, maxId, totalCount, bySender };
     },
     since(afterId, limit) {
       return sinceSelect.all(Number(afterId) || 0, Math.max(1, Math.floor(limit || 200))).map(rowToMessage);

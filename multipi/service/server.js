@@ -124,7 +124,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       assertName(body.agent, "agent");
       const agent = body.agent.trim();
-      const result = queue.recv(agent, body.limit || 10);
+      const from = body.from ? String(body.from).trim() : undefined;
+      const result = queue.recv(agent, body.limit || 10, from);
       notifyPending(agent);
       return json(res, 200, result);
     }
@@ -335,8 +336,8 @@ function subscribe(agent, req, res) {
     return;
   }
 
-  const count = queue.count(agent);
-  if (count > 0) sendEvent(agent, res, { type: "pending", agent, count });
+  const batch = queue.pendingBatch(agent);
+  if (batch.totalCount > 0) sendEvent(agent, res, { type: "pending", ...batch });
 }
 
 function taskDeliverSystem(content, dests) {
@@ -344,10 +345,11 @@ function taskDeliverSystem(content, dests) {
   for (const dest of dests) notifyPending(dest);
 }
 
-function notifyPending(agent) {  const count = queue.count(agent);
+function notifyPending(agent) {
   const set = subscribers.get(agent);
   if (!set) return;
-  for (const res of [...set]) sendEvent(agent, res, { type: "pending", agent, count });
+  const batch = queue.pendingBatch(agent);
+  for (const res of [...set]) sendEvent(agent, res, { type: "pending", ...batch });
 }
 
 function sendEvent(agent, res, event) {
