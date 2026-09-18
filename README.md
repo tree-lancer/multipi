@@ -43,7 +43,7 @@ Scripted multi-agent scenarios live under `demo/`:
 
 ```bash
 cd demo
-./run_case.sh guess-celebrity-game
+./run_case.sh guess-celebrity-game --keep-running
 ```
 
 See `demo/README.md` for how it works and how to add a new case.
