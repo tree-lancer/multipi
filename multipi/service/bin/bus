@@ -191,6 +191,11 @@ function formatFullHistory(rows) {
 }
 
 function page(text) {
+  process.stdout.on("error", (error) => {
+    if (error.code === "EPIPE") process.exit(0);
+    throw error;
+  });
+
   if (!process.stdout.isTTY) {
     process.stdout.write(text);
     return;
@@ -198,6 +203,12 @@ function page(text) {
 
   const pager = process.env.PAGER || "less -R";
   const child = spawn(pager, { shell: true, stdio: ["pipe", "inherit", "inherit"] });
+  child.stdin.on("error", (error) => {
+    // The pager (e.g. less) can close its input pipe as soon as the user
+    // quits, before this process finishes writing the full history text.
+    // Without this handler, that surfaces as an unhandled EPIPE crash.
+    if (error.code !== "EPIPE") throw error;
+  });
   child.stdin.end(text);
   child.on("exit", (code) => process.exit(code || 0));
 }
