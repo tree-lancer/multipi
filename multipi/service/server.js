@@ -115,7 +115,11 @@ const server = http.createServer(async (req, res) => {
         if (!getAgent.get(dest)) throw new Error(`destination is not registered: ${dest}`);
       }
       const result = queue.send(from, dests, body.message);
-      for (const message of result.messages || []) broadcastGlobal({ type: "message", message });
+      // Broadcast the whole batch as a single event so consumers (e.g. the
+      // dashboard bridge) can group a 1-to-N send into one logical record
+      // by construction, instead of reassembling it from separate
+      // 'message' events that could arrive across more than one read.
+      if (result.messages?.length) broadcastGlobal({ type: "message_batch", messages: result.messages });
       for (const dest of dests) notifyPending(dest);
       return json(res, 200, result);
     }
@@ -460,6 +464,13 @@ function migrate(db) {
   const messageColumns = db.prepare("PRAGMA table_info(messages)").all();
   if (!messageColumns.some((column) => column.name === "reply_to_id")) {
     db.exec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER");
+  }
+  if (!messageColumns.some((column) => column.name === "batch_id")) {
+    // batch_id groups every physical row created by one logical send()/
+    // taskDeliverSystem() call (one row per destination) so consumers (e.g.
+    // the dashboard bridge) can collapse a broadcast into a single record
+    // by an exact key instead of guessing from content/timestamp equality.
+    db.exec("ALTER TABLE messages ADD COLUMN batch_id INTEGER");
   }
 }
 

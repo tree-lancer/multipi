@@ -4,8 +4,10 @@ function createQueue(db) {
     VALUES (@sender, @dest, @subject, @content, @attachment_json, @reply_to_id, @created_at)
   `);
 
+  const setBatchId = db.prepare(`UPDATE messages SET batch_id = ? WHERE id = ?`);
+
   const recvSelect = db.prepare(`
-    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, created_at
+    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, batch_id, created_at
     FROM messages
     WHERE dest = ? AND delivered_at IS NULL
     ORDER BY id
@@ -13,7 +15,7 @@ function createQueue(db) {
   `);
 
   const recvSelectFrom = db.prepare(`
-    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, created_at
+    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, batch_id, created_at
     FROM messages
     WHERE dest = ? AND sender = ? AND delivered_at IS NULL
     ORDER BY id
@@ -31,7 +33,7 @@ function createQueue(db) {
   `);
 
   const sinceSelect = db.prepare(`
-    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, created_at
+    SELECT id, sender, dest, subject, content, attachment_json, reply_to_id, batch_id, created_at
     FROM messages
     WHERE id > ?
     ORDER BY id
@@ -65,6 +67,12 @@ function createQueue(db) {
         createdAt,
       });
     }
+    // The first row's own id is a stable, unique batch key: every row from
+    // this call (including the first) gets it, and it can never collide
+    // with another call's batch_id since ids are strictly increasing.
+    const batchId = ids[0];
+    for (const id of ids) setBatchId.run(batchId, id);
+    for (const m of messages) m.batchId = batchId;
     return { ids, messages };
   });
 
@@ -118,6 +126,10 @@ function rowToMessage(row) {
     content: row.content,
     attachment: JSON.parse(row.attachment_json || "[]"),
     replyTo: row.reply_to_id ?? undefined,
+    // Rows written before this migration have no batch_id; fall back to
+    // the row's own id so each is its own singleton batch rather than
+    // colliding with unrelated rows (NULL groups nothing meaningfully).
+    batchId: row.batch_id ?? row.id,
     createdAt: row.created_at,
   };
 }
